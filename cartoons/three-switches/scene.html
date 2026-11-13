@@ -1,0 +1,747 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Три выключателя</title>
+<style>html,body{margin:0;background:#000}canvas{display:block}</style></head>
+<body><canvas id="c" width="1280" height="720"></canvas>
+<script>
+// Мультфильм «Три выключателя». render(t) рисует кадр в момент t (секунды).
+const W = 1280, H = 720;
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const FONT = '"DejaVu Sans", "Liberation Sans", sans-serif';
+let TL = null;
+const EV = {};
+
+// ---------- утилиты ----------
+const clamp = (v, a = 0, b = 1) => Math.max(a, Math.min(b, v));
+const lerp = (a, b, t) => a + (b - a) * t;
+const P = (t, a, b) => clamp((t - a) / (b - a));
+const eio = t => t < .5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+const eob = t => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); };
+const pop = (t, t0, d = 0.4) => t < t0 ? 0 : eob(clamp((t - t0) / d));
+const S = id => TL.segments.find(s => s.id === id);
+const L = k => TL.lines[k];
+const rnd = i => { const x = Math.sin(i * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); };
+
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r); ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+}
+function ell(x, y, rx, ry, fill, stroke, lw) {
+  ctx.beginPath(); ctx.ellipse(x, y, Math.max(.1, rx), Math.max(.1, ry), 0, 0, Math.PI * 2);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw || 3; ctx.stroke(); }
+}
+function txt(s, x, y, size, color, o = {}) {
+  ctx.save();
+  ctx.font = `${o.weight || 'bold'} ${size}px ${FONT}`;
+  ctx.textAlign = o.align || 'center'; ctx.textBaseline = 'middle';
+  if (o.stroke) { ctx.lineJoin = 'round'; ctx.lineWidth = o.sw || size / 6; ctx.strokeStyle = o.stroke; ctx.strokeText(s, x, y); }
+  if (o.shadow) { ctx.shadowColor = o.shadow; ctx.shadowBlur = o.blur || 0; ctx.shadowOffsetY = o.sy ?? 4; }
+  ctx.fillStyle = color; ctx.fillText(s, x, y);
+  ctx.restore();
+}
+function talk(t, voice) {
+  for (const k in TL.lines) {
+    const l = TL.lines[k];
+    if (l.voice === voice && t >= l.start && t <= l.end) return l.env[Math.floor((t - l.start) * 30)] || 0;
+  }
+  return 0;
+}
+const blink = t => { const c = (t + 0.7) % 3.4; return c < 0.13 ? 0.1 : 1; };
+
+// ---------- состояние выключателей и лампы ----------
+function swVal(i, t) {
+  if (i === 0) return P(t, EV.sw1on, EV.sw1on + .1) - P(t, EV.sw1off, EV.sw1off + .1);
+  if (i === 1) return P(t, EV.sw2on, EV.sw2on + .1);
+  return 0;
+}
+const lampOn = t => swVal(0, t) > .5;
+const heat = t => P(t, EV.sw1on, S('wait').end);
+
+// ---------- персонаж: Пушистик ----------
+// x, y — точка на полу; o: s (масштаб), talk, mood, look [x,y], armL/armR (угол, 0 — вниз, PI — вверх),
+// reachL/reachR {x,y} — тянуть руку к точке в координатах сцены, walk (фаза), jump, squash, t
+function drawHero(x, y, o = {}) {
+  const s = o.s || 1, t = o.t || 0;
+  const bob = (o.bob ?? Math.sin(t * 3) * 3) - (o.jump || 0);
+  ctx.save();
+  ctx.translate(x, y); ctx.scale(s, s);
+  // тень
+  ell(0, 0, 70 * (1 - (o.jump || 0) / 300), 12, 'rgba(0,0,0,0.18)');
+  const sq = o.squash || 0;
+  ctx.scale(1 + sq * .15, 1 - sq * .15);
+  // ножки
+  const wk = o.walk !== undefined ? 1 : 0, wp = o.walk || 0;
+  const fy = -(o.jump || 0);
+  ell(-32 + Math.sin(wp) * 14 * wk, fy - 12 - Math.max(0, Math.sin(wp)) * 12 * wk, 27, 14, '#e8833a', '#c25a12', 3);
+  ell(32 - Math.sin(wp) * 14 * wk, fy - 12 - Math.max(0, -Math.sin(wp)) * 12 * wk + (o.tap ? -Math.max(0, Math.sin(t * 14)) * 10 : 0), 27, 14, '#e8833a', '#c25a12', 3);
+  // тело
+  const by = -100 + bob - (wk ? Math.abs(Math.sin(wp)) * 6 : 0);
+  ctx.translate(0, by);
+  const R = 80;
+  ctx.beginPath();
+  for (let i = 0; i <= 160; i++) {
+    const a = i / 160 * Math.PI * 2;
+    const r = R + 3.5 * Math.sin(a * 22 + 0.5) + (a > 3.9 && a < 5.5 ? 4 * Math.sin((a - 3.9) / 1.6 * Math.PI * 3) : 0);
+    const px = Math.cos(a) * r, py = Math.sin(a) * r;
+    i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+  }
+  ctx.closePath();
+  const g = ctx.createRadialGradient(-25, -35, 10, 0, 0, R + 10);
+  g.addColorStop(0, '#ffc27a'); g.addColorStop(1, o.hotTint ? '#ff6a3d' : '#ff8f2e');
+  ctx.fillStyle = g; ctx.fill();
+  ctx.lineWidth = 4; ctx.strokeStyle = '#c25a12'; ctx.stroke();
+  // хохолок
+  ctx.fillStyle = '#ff9f43'; ctx.strokeStyle = '#c25a12'; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.moveTo(-14, -R + 4);
+  ctx.quadraticCurveTo(-10, -R - 30, 6, -R - 26 + Math.sin(t * 5) * 3);
+  ctx.quadraticCurveTo(-2, -R - 12, 12, -R + 4); ctx.fill(); ctx.stroke();
+  // животик
+  ell(0, 38, 46, 30, 'rgba(255,224,170,0.85)');
+  // щёчки
+  ell(-50, 14, 11, 8, 'rgba(255,90,110,0.35)'); ell(50, 14, 11, 8, 'rgba(255,90,110,0.35)');
+  // глаза
+  const look = o.look || [0, 0];
+  const mood = o.mood || '';
+  if (mood === 'ouch') {
+    ctx.strokeStyle = '#2b1a10'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-42, -32); ctx.lineTo(-24, -20); ctx.lineTo(-42, -8);
+    ctx.moveTo(42, -32); ctx.lineTo(24, -20); ctx.lineTo(42, -8); ctx.stroke();
+  } else {
+    const bl = blink(t) * (mood === 'happy' ? .9 : 1);
+    for (const ex of [-29, 29]) {
+      ell(ex, -20, 22, 27 * bl, '#fff', '#2b1a10', 3);
+      if (bl > .3) {
+        ell(ex + look[0] * 8, -18 + look[1] * 9, 11, 12 * bl, '#2b1a10');
+        ell(ex + look[0] * 8 + 4, -23 + look[1] * 9, 4, 4, '#fff');
+      }
+    }
+    // брови
+    ctx.strokeStyle = '#8a3b0a'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (mood === 'think') {
+      ctx.moveTo(-44, -58); ctx.lineTo(-16, -62);
+      ctx.moveTo(16, -66); ctx.quadraticCurveTo(30, -76, 44, -64);
+    } else if (mood === 'happy') {
+      ctx.moveTo(-42, -60); ctx.quadraticCurveTo(-29, -70, -16, -60);
+      ctx.moveTo(16, -60); ctx.quadraticCurveTo(29, -70, 42, -60);
+    } else {
+      ctx.moveTo(-40, -58); ctx.quadraticCurveTo(-29, -63, -18, -58);
+      ctx.moveTo(18, -58); ctx.quadraticCurveTo(29, -63, 40, -58);
+    }
+    ctx.stroke();
+  }
+  // рот
+  const tk = o.talk || 0;
+  if (mood === 'ouch') {
+    ell(0, 26, 20, 18, '#7a1f1f', '#2b1a10', 3); ell(0, 36, 10, 6, '#ff7a8a');
+  } else if (tk > 0.06) {
+    ell(0, 24, 13 + 5 * tk, 3 + 15 * tk, '#7a1f1f', '#2b1a10', 3);
+    if (tk > .35) ell(0, 24 + 9 * tk, 8, 4 * tk, '#ff7a8a');
+  } else {
+    ctx.strokeStyle = '#2b1a10'; ctx.lineWidth = 4; ctx.lineCap = 'round';
+    ctx.beginPath();
+    if (mood === 'think') { ctx.moveTo(-10, 26); ctx.quadraticCurveTo(2, 22, 12, 27); }
+    else if (mood === 'happy') { ctx.moveTo(-20, 18); ctx.quadraticCurveTo(0, 40, 20, 18); }
+    else { ctx.moveTo(-14, 20); ctx.quadraticCurveTo(0, 32, 14, 20); }
+    ctx.stroke();
+  }
+  // ручки
+  const arm = (side, ang, reach, len = 58) => {
+    const sx = side * 72, sy = 18;
+    let hx, hy;
+    if (reach) {
+      hx = (reach.x - x) / s; hy = (reach.y - y) / s - by;
+      if (sq) { hx /= (1 + sq * .15); }
+    } else { hx = sx + side * Math.sin(ang) * len; hy = sy + Math.cos(ang) * len; }
+    const mx = (sx + hx) / 2 + side * 10, my = (sy + hy) / 2 + 8;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = '#c25a12'; ctx.lineWidth = 16;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(mx, my, hx, hy); ctx.stroke();
+    ctx.strokeStyle = '#ff9f43'; ctx.lineWidth = 10;
+    ctx.beginPath(); ctx.moveTo(sx, sy); ctx.quadraticCurveTo(mx, my, hx, hy); ctx.stroke();
+    ell(hx, hy, 13, 13, (side > 0 && o.redHand) ? '#ff4d3d' : '#ffb35c', '#c25a12', 3);
+  };
+  arm(-1, o.armL ?? .35, o.reachL);
+  arm(1, o.armR ?? .35, o.reachR);
+  ctx.restore();
+}
+
+// ---------- лампочка ----------
+// st: on (0..1), hot (0..1), cold (bool)
+function drawBulb(x, y, r, st = {}, t = 0) {
+  const on = st.on || 0, hot = st.hot || 0;
+  if (on > 0) {
+    const g = ctx.createRadialGradient(x, y, r * .3, x, y, r * 5);
+    g.addColorStop(0, `rgba(255,240,150,${.75 * on})`); g.addColorStop(1, 'rgba(255,220,100,0)');
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r * 5, 0, Math.PI * 2); ctx.fill();
+  }
+  // цоколь
+  ctx.fillStyle = '#9aa3ad'; rr(x - r * .42, y - r * 1.55, r * .84, r * .6, 4); ctx.fill();
+  ctx.strokeStyle = '#6b737c'; ctx.lineWidth = 3; ctx.stroke();
+  for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(x - r * .42, y - r * 1.45 + i * r * .18); ctx.lineTo(x + r * .42, y - r * 1.38 + i * r * .18); ctx.stroke(); }
+  // стекло
+  let fill;
+  if (st.cold) fill = '#dff3ff';
+  else if (on > 0) fill = `rgb(255,${Math.round(lerp(240, 236, on))},${Math.round(lerp(220, 120, on))})`;
+  else fill = `rgb(${Math.round(lerp(225, 255, hot))},${Math.round(lerp(232, 150, hot))},${Math.round(lerp(240, 110, hot))})`;
+  ctx.beginPath();
+  ctx.moveTo(x - r * .4, y - r * .95);
+  ctx.bezierCurveTo(x - r * .4, y - r * .55, x - r, y - r * .5, x - r, y + r * .1);
+  ctx.arc(x, y + r * .1, r, Math.PI, 0, true);
+  ctx.bezierCurveTo(x + r, y - r * .5, x + r * .4, y - r * .55, x + r * .4, y - r * .95);
+  ctx.closePath();
+  ctx.fillStyle = fill; ctx.fill(); ctx.strokeStyle = st.cold ? '#7fb6d9' : '#8a7f6a'; ctx.lineWidth = 3; ctx.stroke();
+  // нить
+  ctx.strokeStyle = on > 0 ? '#ff9a00' : (hot > .3 ? '#ff5a2a' : '#8a7f6a'); ctx.lineWidth = 2.5;
+  ctx.beginPath(); ctx.moveTo(x - r * .2, y - r * .9); ctx.lineTo(x - r * .2, y); ctx.lineTo(x - r * .1, y + r * .15);
+  ctx.lineTo(x, y); ctx.lineTo(x + r * .1, y + r * .15); ctx.lineTo(x + r * .2, y); ctx.lineTo(x + r * .2, y - r * .9); ctx.stroke();
+  // блик
+  ctx.strokeStyle = 'rgba(255,255,255,0.8)'; ctx.lineWidth = r * .12; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.arc(x, y + r * .1, r * .7, Math.PI * 1.1, Math.PI * 1.4); ctx.stroke();
+  // жар
+  if (hot > .05) {
+    ctx.strokeStyle = `rgba(255,90,40,${.75 * hot})`; ctx.lineWidth = 4;
+    for (let i = -1; i <= 1; i++) {
+      ctx.beginPath();
+      const bx = x + i * r * .7, ph = t * 6 + i;
+      for (let k = 0; k <= 20; k++) {
+        const yy = y - r * 1.8 - k * r * .06 - ((t * 40) % 10) * 0;
+        const xx = bx + Math.sin(ph + k * .5) * r * .15;
+        k ? ctx.lineTo(xx, yy - 0) : ctx.moveTo(xx, yy);
+      }
+      ctx.stroke();
+    }
+    for (let i = -1; i <= 1; i += 2) {
+      ctx.beginPath();
+      const bx = x + i * r * 1.35;
+      for (let k = 0; k <= 16; k++) {
+        const yy = y + r * .6 - k * r * .1, xx = bx + Math.sin(t * 7 + k * .6 + i) * r * .12;
+        k ? ctx.lineTo(xx, yy) : ctx.moveTo(xx, yy);
+      }
+      ctx.stroke();
+    }
+  }
+  if (st.cold) {
+    ctx.strokeStyle = '#4aa3df'; ctx.lineWidth = 3;
+    const cx = x + r * 1.5, cy = y - r * .8, s = r * .4;
+    for (let k = 0; k < 3; k++) {
+      const a = k * Math.PI / 3; ctx.beginPath();
+      ctx.moveTo(cx - Math.cos(a) * s, cy - Math.sin(a) * s); ctx.lineTo(cx + Math.cos(a) * s, cy + Math.sin(a) * s); ctx.stroke();
+    }
+  }
+}
+
+// ---------- выключатель ----------
+function drawSwitch(cx, cy, v, label, glow = 0, sc = 1) {
+  ctx.save(); ctx.translate(cx, cy); ctx.scale(sc, sc);
+  if (glow > 0) { ctx.shadowColor = `rgba(255,220,60,${glow})`; ctx.shadowBlur = 30; }
+  ctx.fillStyle = '#ffffff'; rr(-26, -45, 52, 90, 10); ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = '#b9b2a0'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = '#e9e4d6'; rr(-14, -32, 28, 64, 7); ctx.fill();
+  const ly = lerp(14, -14, v);
+  ctx.fillStyle = v > .5 ? '#4caf50' : '#e74c3c'; rr(-12, ly - 15, 24, 30, 6); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 2; ctx.stroke();
+  if (label) {
+    ctx.fillStyle = '#3d3a52'; ell(0, -70, 19, 19, '#3d3a52');
+    txt(label, 0, -69, 22, '#fff');
+  }
+  ctx.restore();
+}
+const SW_X = [870, 970, 1070], SW_Y = 450;
+
+// ---------- коридор ----------
+function drawCorridor(t, o = {}) {
+  const g = ctx.createLinearGradient(0, 0, 0, 600);
+  g.addColorStop(0, '#b6e0f5'); g.addColorStop(1, '#8cc6e6');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, 600);
+  ctx.fillStyle = 'rgba(255,255,255,0.18)';
+  for (let x = 0; x < W; x += 80) ctx.fillRect(x, 0, 30, 590);
+  // пол
+  ctx.fillStyle = '#c98c5a'; ctx.fillRect(0, 600, W, 120);
+  ctx.strokeStyle = 'rgba(90,50,20,0.25)'; ctx.lineWidth = 3;
+  for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(0, 625 + i * 28); ctx.lineTo(W, 625 + i * 28); ctx.stroke(); }
+  ctx.fillStyle = '#f6f2e8'; ctx.fillRect(0, 588, W, 16);
+  // картина
+  ctx.fillStyle = '#8a5a35'; rr(560, 110, 160, 120, 6); ctx.fill();
+  ctx.fillStyle = '#e8f6ff'; ctx.fillRect(572, 122, 136, 96);
+  ctx.fillStyle = '#7cc47c'; ctx.beginPath(); ctx.moveTo(572, 218); ctx.lineTo(615, 160); ctx.lineTo(645, 190); ctx.lineTo(670, 150); ctx.lineTo(708, 218); ctx.fill();
+  ell(690, 140, 10, 10, '#ffd34d');
+  // цветок
+  ctx.fillStyle = '#d0613b'; ctx.beginPath(); ctx.moveTo(1170, 600); ctx.lineTo(1240, 600); ctx.lineTo(1250, 540); ctx.lineTo(1160, 540); ctx.fill();
+  ctx.strokeStyle = '#3f8f45'; ctx.lineWidth = 6;
+  for (let i = 0; i < 5; i++) {
+    const a = -1.2 + i * .6 + Math.sin(t * 1.5 + i) * .05;
+    ctx.beginPath(); ctx.moveTo(1205, 540); ctx.quadraticCurveTo(1205 + Math.sin(a) * 40, 500, 1205 + Math.sin(a) * 80, 540 - Math.cos(a) * 90); ctx.stroke();
+    ell(1205 + Math.sin(a) * 80, 540 - Math.cos(a) * 90, 14, 9, '#5cb85c');
+  }
+  // дверь
+  const od = o.doorOpen || 0;
+  ctx.fillStyle = '#6b4226'; ctx.fillRect(318, 190, 224, 410);
+  ctx.fillStyle = '#20223a'; ctx.fillRect(334, 205, 192, 395);
+  const dw = 192 * (1 - od * .8);
+  ctx.fillStyle = od > 0 ? '#8d5630' : '#a0663a'; ctx.fillRect(334, 205, dw, 395);
+  if (dw > 40) {
+    ctx.strokeStyle = 'rgba(70,35,15,0.5)'; ctx.lineWidth = 4;
+    ctx.strokeRect(334 + dw * .12, 230, dw * .76, 150); ctx.strokeRect(334 + dw * .12, 410, dw * .76, 160);
+    ell(334 + dw * .86, 415, 10, 10, '#f2c14e', '#a7802a', 3);
+  }
+  // свет из-под двери
+  if (o.lamp && od < .1) {
+    ctx.save(); ctx.shadowColor = '#ffe066'; ctx.shadowBlur = 25;
+    ctx.fillStyle = '#ffe680'; ctx.fillRect(336, 595, 188, 6); ctx.restore();
+    const lg = ctx.createLinearGradient(0, 600, 0, 660);
+    lg.addColorStop(0, 'rgba(255,230,120,0.55)'); lg.addColorStop(1, 'rgba(255,230,120,0)');
+    ctx.fillStyle = lg; ctx.beginPath(); ctx.moveTo(336, 600); ctx.lineTo(524, 600); ctx.lineTo(560, 660); ctx.lineTo(300, 660); ctx.fill();
+  }
+  // табличка на двери
+  if (od < .1) {
+    ctx.fillStyle = '#fff6d8'; rr(380, 160 + 40, 100, 0, 0);
+    ctx.fillStyle = '#fff6d8'; rr(388, 290, 84, 50, 8); ctx.fill(); ctx.strokeStyle = '#a0663a'; ctx.lineWidth = 3; ctx.stroke();
+    drawBulb(430, 320, 12, {});
+  }
+  // панель выключателей
+  ctx.fillStyle = '#efe8d4'; rr(810, 380, 320, 140, 14); ctx.fill();
+  ctx.strokeStyle = '#c9c0a6'; ctx.lineWidth = 3; ctx.stroke();
+  for (let i = 0; i < 3; i++) drawSwitch(SW_X[i], SW_Y, swVal(i, t), String(i + 1), (o.glow || [0, 0, 0])[i]);
+}
+
+// врезка «что в комнате»
+function drawInset(cx, cy, r, st, t, a = 1) {
+  if (a <= 0) return;
+  ctx.save(); ctx.globalAlpha = a;
+  ctx.translate(cx, cy); ctx.scale(lerp(.6, 1, a), lerp(.6, 1, a)); ctx.translate(-cx, -cy);
+  ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(cx, cy, r + 8, 0, Math.PI * 2); ctx.fill();
+  ctx.save(); ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
+  ctx.fillStyle = st.on ? '#6b6890' : '#2a2c45'; ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+  ctx.strokeStyle = '#111'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy - r * .35); ctx.stroke();
+  drawBulb(cx, cy + r * .12, r * .3, st, t);
+  ctx.restore();
+  ctx.strokeStyle = '#3d3a52'; ctx.lineWidth = 5; ctx.beginPath(); ctx.arc(cx, cy, r + 8, 0, Math.PI * 2); ctx.stroke();
+  ctx.restore();
+}
+
+function questionMarks(x, y, t, t0, t1) {
+  for (let i = 0; i < 3; i++) {
+    const st = t0 + i * .7;
+    if (t < st) continue;
+    const k = ((t - st) % 2.1) / 2.1;
+    if (t > t1 && (t - st) % 2.1 < (t - t1)) continue;
+    const a = Math.sin(k * Math.PI);
+    ctx.save(); ctx.globalAlpha = a;
+    txt('?', x + (i - 1) * 70 + Math.sin(k * 6 + i) * 8, y - k * 70 - (i === 1 ? 30 : 0), 56 + i * 6, '#5b4fc4', { stroke: '#fff', sw: 8 });
+    ctx.restore();
+  }
+}
+
+function ideaBulb(x, y, a, t) {
+  if (a <= 0) return;
+  ctx.save(); ctx.translate(x, y); ctx.scale(a, a);
+  ctx.strokeStyle = '#ffcc00'; ctx.lineWidth = 6; ctx.lineCap = 'round';
+  for (let i = 0; i < 8; i++) {
+    const an = i / 8 * Math.PI * 2 + t * .5, r1 = 52, r2 = 70 + Math.sin(t * 8 + i) * 6;
+    ctx.beginPath(); ctx.moveTo(Math.cos(an) * r1, Math.sin(an) * r1); ctx.lineTo(Math.cos(an) * r2, Math.sin(an) * r2); ctx.stroke();
+  }
+  drawBulb(0, 8, 30, { on: 1 }, t);
+  ctx.restore();
+}
+
+function badge(x, y, w, h, text, color, a) {
+  if (a <= 0) return;
+  ctx.font = `bold 30px ${FONT}`; if (!w) w = ctx.measureText(text).width + 60;
+  ctx.save(); ctx.translate(x, y); ctx.scale(a, a);
+  ctx.shadowColor = 'rgba(0,0,0,0.2)'; ctx.shadowBlur = 12; ctx.shadowOffsetY = 5;
+  ctx.fillStyle = '#fff'; rr(-w / 2, -h / 2, w, h, 18); ctx.fill();
+  ctx.shadowBlur = 0; ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.stroke();
+  txt(text, 0, 2, 30, color);
+  ctx.restore();
+}
+
+// ---------- сцены ----------
+function sceneTitle(t) {
+  const g = ctx.createRadialGradient(640, 300, 50, 640, 360, 800);
+  g.addColorStop(0, '#4a3a8c'); g.addColorStop(1, '#17123a');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  for (let i = 0; i < 60; i++) {
+    const a = .3 + .7 * Math.abs(Math.sin(t * 1.5 + i * 2.3));
+    ell(rnd(i) * W, rnd(i + 99) * H, 2, 2, `rgba(255,255,255,${a * .8})`);
+  }
+  const ang = Math.sin(t * 1.8) * .22;
+  ctx.save(); ctx.translate(640, -10); ctx.rotate(ang);
+  ctx.strokeStyle = '#222'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 160); ctx.stroke();
+  drawBulb(0, 215, 42, { on: P(t, .3, .6) * (0.85 + .15 * Math.sin(t * 20) * (t < 1 ? 1 : 0)) }, t);
+  ctx.restore();
+  txt('ЗАГАДКА', 640, 375, 40, '#ffe680', { stroke: '#2a1f5c', sw: 8 });
+  const a = pop(t, .9, .5);
+  ctx.save(); ctx.translate(640, 460); ctx.scale(a, a);
+  txt('Три выключателя', 0, 0, 92, '#fff', { stroke: '#2a1f5c', sw: 14, shadow: 'rgba(0,0,0,0.4)', blur: 10 });
+  ctx.restore();
+  for (let i = 0; i < 3; i++) {
+    const b = pop(t, 1.6 + i * .25, .4);
+    if (b > 0) drawSwitch(540 + i * 100, 600, i === 0 ? 1 : 0, '', 0, b * .8);
+  }
+}
+
+function sceneCorridor(t, segId) {
+  const sg = S(segId), lt = t - sg.start;
+  let cam = { x: 640, y: 360, z: 1 };
+  let hero = { x: 640, y: 670, o: { s: 1.3, t } };
+  const co = { lamp: lampOn(t), glow: [0, 0, 0] };
+  const after = [];
+  const ho = hero.o;
+  ho.talk = talk(t, 'H');
+
+  if (segId === 'intro') {
+    const ls = L('n_switches').start;
+    const pan = eio(P(t, ls - .3, ls + .5));
+    cam = { x: lerp(520, 920, pan), y: lerp(370, 420, pan), z: lerp(1.25, 1.45, pan) };
+    ho.look = [lerp(-1, 1, pan), -.2];
+    const g = Math.max(0, Math.sin((t - ls) * 4)) * (t > ls ? 1 : 0);
+    co.glow = [g, g, g];
+    const ia = pop(t, L('n_room').start + 2.2) * (1 - P(t, ls - .2, ls));
+    after.push(() => drawInset(660, 185, 80, {}, t, ia));
+  } else if (segId === 'rules') {
+    const z = eio(P(lt, 0, .9));
+    cam = { x: lerp(920, 640, z), y: lerp(420, 360, z), z: lerp(1.45, 1, z) };
+    const r1 = L('n_rule1'), r2 = L('n_rule2');
+    const qa = pop(t, r1.start + .2);
+    after.push(() => {
+      for (let i = 0; i < 3; i++) {
+        if (qa <= 0) continue;
+        const k = Math.sin(t * 3 + i) * 5;
+        ctx.save(); ctx.globalAlpha = clamp(qa) * (1 - P(t, r2.start + 2.5, r2.start + 3));
+        txt('?', SW_X[i], 330 + k, 46, '#5b4fc4', { stroke: '#fff', sw: 8 }); ctx.restore();
+      }
+      const d = r2.end - r2.start;
+      badge(370, 90, 0, 76, 'Щёлкать — сколько угодно', '#2e9e4f', pop(t, r2.start + .3));
+      badge(920, 90, 0, 76, 'Заходить — 1 раз!', '#d6453d', pop(t, r2.start + d * .55));
+    });
+    ho.look = [Math.sin(t * .9) * .8, -.2];
+    ho.mood = '';
+  } else if (segId === 'think') {
+    const l = L('h_hmm');
+    ho.mood = 'think';
+    ho.armR = 2.75 + Math.sin(t * 16) * .12;
+    ho.look = [Math.sin(t * 1.6) * .9, -.6];
+    after.push(() => questionMarks(640, 380, t, sg.start + .3, sg.end - .4));
+  } else if (segId === 'idea') {
+    const ia = pop(t, EV.idea, .45);
+    const jk = P(t, EV.idea, EV.idea + .5);
+    ho.jump = Math.sin(jk * Math.PI) * 60;
+    ho.squash = jk > 0 && jk < 1 ? 0 : -.0;
+    ho.mood = 'happy';
+    ho.armL = lerp(.35, 2.9, eio(P(t, EV.idea, EV.idea + .25)));
+    ho.look = [0, -.5];
+    after.push(() => ideaBulb(640, 330 - (ho.jump || 0), ia, t));
+  } else if (segId === 'switch1') {
+    const wk = P(t, sg.start, sg.start + 1.0);
+    hero.x = lerp(640, 730, eio(wk));
+    if (wk > 0 && wk < 1) ho.walk = wk * Math.PI * 3;
+    const r = P(t, EV.sw1on - .35, EV.sw1on) * (1 - P(t, EV.sw1on + .35, EV.sw1on + .7));
+    if (r > 0) {
+      const tx = SW_X[0], ty = SW_Y + lerp(14, -14, swVal(0, t));
+      const hx = hero.x + 95, hy = 545;
+      ho.reachR = { x: lerp(hx, tx, eio(r)), y: lerp(hy, ty, eio(r)) };
+    }
+    ho.look = t < EV.sw1on + .5 ? [1, 0] : [0, 0];
+    ho.mood = t > EV.sw1on ? 'happy' : '';
+  } else if (segId === 'wait') {
+    hero.x = 730;
+    ho.tap = true; ho.squash = .25;
+    ho.look = [.9, -.9];
+    ho.bob = Math.sin(t * 2) * 2;
+    const w = S('wait');
+    after.push(() => {
+      // часы
+      const cx = 1120, cy = 150, R = 82, k = P(t, w.start, w.end - .4);
+      const a = pop(t, w.start + .1);
+      ctx.save(); ctx.translate(cx, cy); ctx.scale(a, a);
+      ell(0, 0, R + 8, R + 8, '#3d3a52'); ell(0, 0, R, R, '#fffdf5');
+      for (let i = 0; i < 12; i++) {
+        const an = i / 12 * Math.PI * 2;
+        ctx.strokeStyle = '#3d3a52'; ctx.lineWidth = i % 3 ? 3 : 6;
+        ctx.beginPath(); ctx.moveTo(Math.sin(an) * R * .8, -Math.cos(an) * R * .8); ctx.lineTo(Math.sin(an) * R * .92, -Math.cos(an) * R * .92); ctx.stroke();
+      }
+      const mA = k * Math.PI / 2, sA = k * Math.PI * 2 * 15;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#3d3a52'; ctx.lineWidth = 8;
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.sin(mA) * R * .7, -Math.cos(mA) * R * .7); ctx.stroke();
+      ctx.lineWidth = 6; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.sin(Math.PI * 2 / 12 * 3 + mA / 12) * R * .45, -Math.cos(Math.PI * 2 / 12 * 3 + mA / 12) * R * .45); ctx.stroke();
+      ctx.strokeStyle = '#e74c3c'; ctx.lineWidth = 3; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(Math.sin(sA) * R * .85, -Math.cos(sA) * R * .85); ctx.stroke();
+      ell(0, 0, 7, 7, '#e74c3c');
+      ctx.restore();
+      badge(800, 70, 0, 76, '15 минут спустя…', '#5b4fc4', pop(t, w.start + .3));
+      drawInset(430, 125, 88, { on: 1, hot: heat(t) }, t, pop(t, L('n_wait').start + 1.5));
+    });
+  } else if (segId === 'switch2') {
+    hero.x = 730;
+    const s1 = EV.sw1off, s2 = EV.sw2on;
+    let r = 0, tx = SW_X[0], ty = SW_Y;
+    const r1 = P(t, s1 - .35, s1) * (1 - P(t, s1 + .2, s1 + .45));
+    const r2 = P(t, s2 - .45, s2) * (1 - P(t, s2 + .35, s2 + .7));
+    const hx = hero.x + 95, hy = 545;
+    if (r1 > 0) { r = r1; tx = SW_X[0]; ty = SW_Y + lerp(14, -14, swVal(0, t)); }
+    if (r2 > 0) { r = r2; tx = SW_X[1]; ty = SW_Y + lerp(14, -14, swVal(1, t)); }
+    if (r > 0) ho.reachR = { x: lerp(hx, tx, eio(r)), y: lerp(hy, ty, eio(r)) };
+    ho.look = r > 0 ? [1, 0] : [0, 0];
+    ho.squash = .25 * (1 - P(lt, 0, .3));
+  } else if (segId === 'enter') {
+    const [w0, w1] = EV.walkDoor;
+    const wk = P(t, w0, w1);
+    hero.x = lerp(730, 440, eio(wk));
+    if (wk > 0 && wk < 1) ho.walk = wk * Math.PI * 3.5;
+    ho.look = [-1, -.2];
+    co.doorOpen = eio(P(t, EV.doorOpen[0], EV.doorOpen[1]));
+    const inn = P(t, EV.doorOpen[1], EV.cut);
+    hero.y = lerp(670, 600, inn); ho.s = lerp(1.3, 1.0, inn);
+  }
+
+  ctx.save();
+  ctx.translate(W / 2, H / 2); ctx.scale(cam.z, cam.z); ctx.translate(-cam.x, -cam.y);
+  drawCorridor(t, co);
+  drawHero(hero.x, hero.y, ho);
+  for (const f of after) f();
+  ctx.restore();
+}
+
+function drawRoom(t, lit) {
+  const k = lit ? 1 : 0;
+  ctx.fillStyle = lit ? '#a7a3d6' : '#3e4166'; ctx.fillRect(0, 0, W, 610);
+  ctx.fillStyle = lit ? '#8a6a52' : '#3a3148'; ctx.fillRect(0, 610, W, 110);
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
+  for (let x = 0; x < W; x += 80) ctx.fillRect(x, 0, 30, 600);
+  ctx.fillStyle = lit ? '#e8e4f8' : '#55587d'; ctx.fillRect(0, 598, W, 14);
+  // дверной проём слева со светом
+  ctx.fillStyle = '#b6e0f5'; ctx.fillRect(40, 200, 150, 400);
+  ctx.fillStyle = '#6b4226'; ctx.fillRect(28, 188, 12, 422); ctx.fillRect(190, 188, 12, 422); ctx.fillRect(28, 188, 174, 12);
+  const lg = ctx.createLinearGradient(190, 0, 650, 0);
+  lg.addColorStop(0, 'rgba(182,224,245,0.45)'); lg.addColorStop(1, 'rgba(182,224,245,0)');
+  ctx.fillStyle = lg; ctx.beginPath(); ctx.moveTo(40, 610); ctx.lineTo(190, 610); ctx.lineTo(650, 720); ctx.lineTo(0, 720); ctx.fill();
+  // комод
+  ctx.fillStyle = lit ? '#b07a52' : '#4a3b4f'; rr(950, 470, 230, 140, 8); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,0.25)'; ctx.lineWidth = 3;
+  ctx.strokeRect(965, 485, 200, 50); ctx.strokeRect(965, 545, 200, 50);
+}
+
+function sceneRoom(t, segId) {
+  const en = S('enter');
+  const bulbX = 700, bulbY = 330;
+  let hero = { x: 520, y: 680, o: { s: 1.4, t } };
+  const ho = hero.o; ho.talk = talk(t, 'H');
+  const after = [];
+  if (segId === 'enter') {
+    const wk = P(t, EV.cut, EV.cut + .8);
+    hero.x = lerp(150, 520, eio(wk));
+    if (wk > 0 && wk < 1) ho.walk = wk * Math.PI * 3;
+    ho.look = [.6, -.9];
+    const lt = L('h_touch');
+    const r = eio(P(t, lt.start + .3, EV.touch));
+    if (r > 0) {
+      ho.reachR = { x: lerp(hero.x + 130, bulbX - 10, r), y: lerp(560, bulbY + 34, r) };
+      ho.jump = r * 25;
+      ho.look = [.8, -1];
+    }
+  } else if (segId === 'hot') {
+    const tt = t - EV.touch;
+    const rec = P(tt, .12, .3);
+    const jk = P(tt, .12, .8);
+    ho.jump = Math.sin(jk * Math.PI) * 110 + (1 - rec) * 25;
+    ho.mood = tt < 1.6 ? 'ouch' : 'happy';
+    ho.hotTint = tt < 1.6;
+    ho.redHand = tt < 3;
+    if (tt < .12) ho.reachR = { x: bulbX - 10, y: bulbY + 34 };
+    else if (tt < 1.6) ho.armR = 2.9 + Math.sin(tt * 30) * .3;
+    else ho.armR = .35;
+    const f = L('h_first');
+    ho.look = [0, 0];
+    if (t > f.start - .3) { ho.armL = 2.9; ho.look = [1, -.3]; }
+    hero.x = 520 - P(tt, .12, .8) * 60;
+    after.push(() => {
+      if (tt > .1 && tt < 1.4) {
+        const a = 1 - P(tt, .9, 1.4);
+        ctx.save(); ctx.globalAlpha = a;
+        const sc = eob(P(tt, .1, .4));
+        ctx.translate(bulbX + 120, bulbY + 40); ctx.scale(sc, sc);
+        ctx.fillStyle = '#ffdd33'; ctx.beginPath();
+        for (let i = 0; i < 16; i++) { const an = i / 16 * Math.PI * 2, r = i % 2 ? 40 : 85; ctx.lineTo(Math.cos(an) * r, Math.sin(an) * r); }
+        ctx.closePath(); ctx.fill(); ctx.strokeStyle = '#e67e22'; ctx.lineWidth = 4; ctx.stroke();
+        txt('АЙ!', 0, 2, 40, '#d6453d');
+        ctx.restore();
+      }
+      const ba = pop(t, f.start + .8, .5);
+      if (ba > 0) {
+        ctx.save(); ctx.translate(1010, 300); ctx.scale(ba, ba);
+        ctx.shadowColor = 'rgba(0,0,0,0.3)'; ctx.shadowBlur = 20; ctx.shadowOffsetY = 6;
+        ctx.fillStyle = '#fff'; rr(-150, -150, 300, 300, 30); ctx.fill(); ctx.shadowBlur = 0;
+        ctx.strokeStyle = '#2e9e4f'; ctx.lineWidth = 8; ctx.stroke();
+        drawSwitch(-50, 10, 1, '1', .8, 1.4);
+        txt('№1', 70, 10, 70, '#2e9e4f');
+        txt('ответ!', 0, 115, 30, '#2e9e4f');
+        ctx.restore();
+      }
+    });
+  }
+  drawRoom(t, false);
+  ctx.strokeStyle = '#151520'; ctx.lineWidth = 4;
+  const sw = segId === 'hot' ? Math.sin((t - EV.touch) * 10) * .05 * (1 - P(t - EV.touch, 0, 2)) : 0;
+  ctx.save(); ctx.translate(bulbX, 0); ctx.rotate(sw);
+  ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, bulbY - 50); ctx.stroke();
+  drawBulb(0, bulbY, 34, { hot: heat(t) }, t);
+  ctx.restore();
+  drawHero(hero.x, hero.y, ho);
+  for (const f of after) f();
+}
+
+function sceneExplain(t) {
+  const sg = S('explain');
+  ctx.fillStyle = '#fdf3dc'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = 'rgba(240,200,120,0.25)';
+  for (let i = 0; i < 40; i++) ell((i * 173) % W, (i * 97 + 30) % H, 26, 26, 'rgba(240,200,120,0.18)');
+  const ta = pop(t, L('n_ex0').start - .1);
+  ctx.save(); ctx.translate(640, 80); ctx.scale(ta, ta);
+  txt('Запомни:', 0, 0, 58, '#3d3a52'); ctx.restore();
+  const cards = [
+    { key: 'n_ex1', st: { on: 1 }, l1: 'ГОРИТ', l2: '', n: '2', col: '#e0a800' },
+    { key: 'n_ex2', st: { hot: 1 }, l1: 'НЕ ГОРИТ,', l2: 'НО ГОРЯЧАЯ', n: '1', col: '#e05a2a' },
+    { key: 'n_ex3', st: { cold: true }, l1: 'НЕ ГОРИТ', l2: 'И ХОЛОДНАЯ', n: '3', col: '#3a8fd0' },
+  ];
+  cards.forEach((c, i) => {
+    const l = L(c.key);
+    const a = pop(t, l.start - .1, .45);
+    if (a <= 0) return;
+    const active = t >= l.start && t <= l.end + .3;
+    const cx = 240 + i * 400, cy = 380;
+    ctx.save(); ctx.translate(cx, cy); ctx.scale(a * (active ? 1.06 : 1), a * (active ? 1.06 : 1));
+    ctx.shadowColor = 'rgba(0,0,0,0.18)'; ctx.shadowBlur = 20; ctx.shadowOffsetY = 8;
+    ctx.fillStyle = '#fff'; rr(-170, -230, 340, 470, 26); ctx.fill(); ctx.shadowBlur = 0;
+    ctx.strokeStyle = c.col; ctx.lineWidth = active ? 8 : 5; ctx.stroke();
+    ctx.fillStyle = c.col; rr(-170, -250, 340, 22, 0); ctx.globalAlpha = 1;
+    if (c.st.on) { ctx.fillStyle = '#2a2c45'; rr(-130, -205, 260, 215, 18); ctx.fill(); }
+    else { ctx.fillStyle = '#2a2c45'; rr(-130, -205, 260, 215, 18); ctx.fill(); }
+    ctx.save(); rr(-130, -205, 260, 215, 18); ctx.clip();
+    drawBulb(0, -85, 42, c.st, t); ctx.restore();
+    txt(c.l1, 0, 40, 30, c.col);
+    if (c.l2) txt(c.l2, 0, 76, 30, c.col);
+    ctx.strokeStyle = '#3d3a52'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(0, 108); ctx.lineTo(0, 124); ctx.moveTo(-9, 115); ctx.lineTo(0, 126); ctx.lineTo(9, 115); ctx.stroke();
+    drawSwitch(-50, 180, c.n === '3' ? 0 : (c.n === '2' ? 1 : 0), '', 0, .75);
+    txt('№' + c.n, 50, 180, 60, '#3d3a52');
+    ctx.restore();
+  });
+}
+
+function sceneEnd(t) {
+  const sg = S('end'), lt = t - sg.start;
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#ffd27a'); g.addColorStop(1, '#ff9f68');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  const cols = ['#e74c3c', '#3498db', '#2ecc71', '#f1c40f', '#9b59b6', '#fff'];
+  for (let i = 0; i < 90; i++) {
+    const sp = 80 + rnd(i) * 120;
+    const y = ((rnd(i + 7) * H + lt * sp) % (H + 40)) - 20;
+    const x = rnd(i + 3) * W + Math.sin(lt * 2 + i) * 20;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(lt * 3 + i);
+    ctx.fillStyle = cols[i % cols.length]; ctx.fillRect(-6, -3, 12, 6); ctx.restore();
+  }
+  const jump = Math.abs(Math.sin(lt * 4)) * 40 * (1 - P(lt, 3, 4));
+  drawHero(640, 640, {
+    s: 1.4, t, talk: talk(t, 'H'), mood: 'happy', jump,
+    armR: 2.6 + Math.sin(lt * 8) * .4, armL: .5, look: [0, 0]
+  });
+  const a = pop(t, L('h_end').end + .2, .5);
+  ctx.save(); ctx.translate(640, 150); ctx.scale(a, a);
+  txt('Конец!', 0, 0, 110, '#fff', { stroke: '#c0392b', sw: 16, shadow: 'rgba(0,0,0,0.3)', blur: 10 });
+  ctx.restore();
+}
+
+// ---------- субтитры ----------
+function subtitles(t) {
+  let cur = null;
+  for (const k in TL.lines) { const l = TL.lines[k]; if (t >= l.start - .05 && t <= l.end + .3) cur = l; }
+  if (!cur || cur.seg === 'title') return;
+  ctx.font = `bold 30px ${FONT}`;
+  const words = cur.text.split(' '), rows = [];
+  let row = '';
+  for (const w of words) {
+    const test = row ? row + ' ' + w : w;
+    if (ctx.measureText(test).width > 1050 && row) { rows.push(row); row = w; } else row = test;
+  }
+  rows.push(row);
+  const h = rows.length * 40 + 20;
+  const y0 = H - 24 - h;
+  ctx.fillStyle = 'rgba(20,18,40,0.62)';
+  const wmax = Math.max(...rows.map(r => ctx.measureText(r).width)) + 50;
+  rr(640 - wmax / 2, y0, wmax, h, 16); ctx.fill();
+  rows.forEach((r, i) => txt(r, 640, y0 + 30 + i * 40, 30, cur.voice === 'H' ? '#ffd29a' : '#ffffff'));
+}
+
+// ---------- главный цикл ----------
+function render(t) {
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const sg = TL.segments.find(s => t >= s.start && t < s.end) || TL.segments[TL.segments.length - 1];
+  const id = sg.id;
+  if (id === 'title') sceneTitle(t);
+  else if (id === 'enter' && t >= EV.cut) sceneRoom(t, id);
+  else if (id === 'hot') sceneRoom(t, id);
+  else if (id === 'explain') sceneExplain(t);
+  else if (id === 'end') sceneEnd(t);
+  else sceneCorridor(t, id);
+  subtitles(t);
+  // переходы — затемнение
+  let fade = 1 - P(t, 0, .5);
+  fade = Math.max(fade, P(t, TL.duration - 1, TL.duration));
+  for (const b of [S('intro').start, EV.cut, S('explain').start, S('end').start])
+    fade = Math.max(fade, 1 - Math.abs(t - b) / .3);
+  if (fade > 0) { ctx.fillStyle = `rgba(0,0,0,${clamp(fade)})`; ctx.fillRect(0, 0, W, H); }
+}
+
+// ---------- звуковые события (для сведения звука) ----------
+function getSfx() {
+  const ev = [];
+  const add = (name, t, vol = 1) => ev.push({ name, t: +t.toFixed(3), vol });
+  add('chime', 0.9);
+  for (let i = 0; i < 3; i++) add('pop', 1.6 + i * .25, .5);
+  add('pop', L('n_room').start + 2.2, .6);
+  add('pop', L('n_rule1').start + .2, .5);
+  const r2 = L('n_rule2'); add('pop', r2.start + .3, .6); add('pop', r2.start + (r2.end - r2.start) * .55, .6);
+  const th = S('think'); for (let i = 0; i < 3; i++) add('pop', th.start + .3 + i * .7, .35);
+  add('ding', EV.idea);
+  add('boing', EV.idea + .02, .5);
+  for (const [a, b] of [[S('switch1').start, S('switch1').start + 1], [EV.walkDoor[0], EV.walkDoor[1]]])
+    for (let x = a + .12; x < b; x += .33) add('step', x, .4);
+  add('click', EV.sw1on); add('click', EV.sw1off); add('click', EV.sw2on);
+  const w = S('wait');
+  add('pop', w.start + .3, .5);
+  let k = 0; for (let x = w.start + .4; x < w.end - .4; x += .5) add(k++ % 2 ? 'tock' : 'tick', x, .6);
+  add('creak', EV.doorOpen[0]);
+  for (let x = EV.cut + .1; x < EV.cut + .8; x += .3) add('step', x, .4);
+  add('sizzle', EV.touch);
+  add('boing', EV.touch + .12, .8);
+  add('pop', L('h_first').start + .8, .6);
+  add('ding', L('h_first').start + .85, .6);
+  for (const kk of ['n_ex0', 'n_ex1', 'n_ex2', 'n_ex3']) add('pop', L(kk).start - .1, .6);
+  add('tada', L('h_end').end + .2);
+  return ev;
+}
+
+window.init = function (tl) {
+  TL = tl;
+  const s1 = S('switch1');
+  EV.sw1on = s1.start + 1.35;
+  const l2 = L('h_sw2');
+  EV.sw1off = l2.start + (l2.end - l2.start) * .42;
+  EV.sw2on = l2.end + .05;
+  const en = S('enter');
+  EV.walkDoor = [en.start, en.start + .9];
+  EV.doorOpen = [en.start + .9, en.start + 1.4];
+  EV.cut = en.start + 1.85;
+  EV.touch = L('h_hot').start - .35;
+  EV.idea = S('idea').start + .45;
+  return { duration: TL.duration, events: EV };
+};
+window.render = render;
+window.getSfx = getSfx;
+</script></body></html>
