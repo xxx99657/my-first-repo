@@ -477,7 +477,7 @@ const deskLight = new THREE.PointLight(0xffb870, 0, 9, 2); deskLight.position.co
 const stoveLight = new THREE.PointLight(0xff6a20, 0, 6, 2); stoveLight.position.copy(cotL(-2.6, 0.5, -1.4)); scene.add(stoveLight);
 const roomFill = new THREE.PointLight(0xffc89a, 0, 8, 2); roomFill.position.copy(cotL(0.5, 2.6, 0)); scene.add(roomFill);
 const outGlow = new THREE.PointLight(0xffb060, 0, 14, 2); outGlow.position.copy(cotL(0, 1.8, 3.6)); scene.add(outGlow);
-const faceFlash = new THREE.PointLight(0xdfe8ff, 0, 6, 2); faceFlash.position.copy(cotL(0.2, 1.9, 2.4)); scene.add(faceFlash);
+const faceFlash = new THREE.PointLight(0xdfe8ff, 0, 6, 2); faceFlash.position.copy(cotL(0.1, 1.85, 1.95)); scene.add(faceFlash);
 // hand lantern (Mark carries in final scene)
 const handLantern = new THREE.Group(); scene.add(handLantern);
 { const bm = std(0x2a2a2a, { metalness: 0.7, roughness: 0.4 }); mesh(new THREE.CylinderGeometry(0.08, 0.09, 0.03, 12), bm, 0, 0, 0, handLantern); mesh(new THREE.CylinderGeometry(0.06, 0.08, 0.04, 12), bm, 0, 0.22, 0, handLantern);
@@ -656,10 +656,10 @@ function lerpV(a, b, k) { return a.clone().lerp(b, k); }
 function setCam(pos, tgt, fov) { camera.position.copy(pos); camera.lookAt(tgt); camera.fov = fov; camera.updateProjectionMatrix(); }
 
 let lastT = -1;
-function renderAt(t) {
-  const u = t; // global time
+function renderAt(t, uv) {
+  const u = uv; // real (video) time for ambient motion
   skyU.uTime.value = u; oceanU.uTime.value = u; rainU.uTime.value = u; sprayU.uTime.value = u;
-  grade.uniforms.uSeed.value = (t * 24) % 1000 / 10;
+  grade.uniforms.uSeed.value = (u * 24) % 1000 / 10;
   // defaults
   let env = ENV.night, sepia = 0, lamp = 0, beamI = 0, beamRot = 0, interior = false, shadowC = LH.clone(), shadowR = 40;
   arthur.group.visible = false; mark.group.visible = false; handLantern.visible = false;
@@ -783,7 +783,9 @@ function renderAt(t) {
   composer.render();
 }
 
-window.renderAt = (t) => { renderAt(t); return true; };
+const KN = [[0,0],[6,6],[13.2,12],[19.7,18.5],[24.5,23.3],[33.7,31],[41.3,38],[47.8,44.5],[55.0,48.4],[57.4,51],[64.0,57.6],[67.3,60.4],[74.9,68]];
+function storyT(v) { for (let i = 1; i < KN.length; i++) { if (v <= KN[i][0]) { const [v0, s0] = KN[i - 1], [v1, s1] = KN[i]; return s0 + (v - v0) / (v1 - v0) * (s1 - s0); } } return 68 + (v - 74.9); }
+window.renderAt = (v) => { renderAt(storyT(v), v); return true; };
 window.grab = (q = 0.95) => renderer.domElement.toDataURL('image/jpeg', q);
 window.OBJ = { lampGlow, beam, lampLight, lh, bloom, handGlow };
 window.READY = true;

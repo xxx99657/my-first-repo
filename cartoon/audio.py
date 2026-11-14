@@ -1,11 +1,18 @@
 import numpy as np, wave, subprocess, os
-SR = 48000; DUR = 68.0; N = int(SR * DUR)
+KN = [[0,0],[6,6],[13.2,12],[19.7,18.5],[24.5,23.3],[33.7,31],[41.3,38],[47.8,44.5],[55.0,48.4],[57.4,51],[64.0,57.6],[67.3,60.4],[74.9,68]]
+def V(x):
+    for i in range(1, len(KN)):
+        if x <= KN[i][1]:
+            (v0, s0), (v1, s1) = KN[i-1], KN[i]; return v0 + (x - s0) / (s1 - s0) * (v1 - v0)
+    return 74.9 + x - 68
+SR = 48000; DUR = 75.0; N = int(SR * DUR)
 rng = np.random.default_rng(7)
 t = np.arange(N) / SR
 L = np.zeros(N); R = np.zeros(N)
 
 def env_pts(pts):
     xs, ys = zip(*pts); return np.interp(t, xs, ys)
+def env_pts_s(pts): return env_pts([(V(x), y) for x, y in pts])
 def lp(x, a):  # one-pole lowpass, a in (0,1)
     from scipy.signal import lfilter
     return lfilter([a], [1, a - 1], x)
@@ -23,11 +30,11 @@ def add(sig, at, gain=1.0, pan=0.0):
     L[i:i + n] += sig[:n] * gain * gl; R[i:i + n] += sig[:n] * gain * gr
 
 # scene masks
-storm = env_pts([(0, 0), (37.5, 0), (38.2, 1), (68, 1)])
-interior = env_pts([(0, 0), (30.95, 0), (31.05, 1), (37.95, 1), (38.05, 0), (44.45, 0), (44.55, 1), (50.95, 1), (51.05, 0), (57.55, 0), (57.65, 1), (60.35, 1), (60.45, 0.35), (68, 0.35)])
-village = env_pts([(0, 0), (18.4, 0), (18.6, 1), (23.2, 1), (23.4, 0), (68, 0)])
-past = env_pts([(0, 0), (11.9, 0), (12.1, 1), (16.6, 1), (17.8, 0), (68, 0)])
-master = env_pts([(0, 0), (0.6, 1), (65.0, 1), (67.5, 0), (68, 0)])
+storm = env_pts_s([(0, 0), (37.5, 0), (38.2, 1), (68, 1)])
+interior = env_pts_s([(0, 0), (30.95, 0), (31.05, 1), (37.95, 1), (38.05, 0), (44.45, 0), (44.55, 1), (50.95, 1), (51.05, 0), (57.55, 0), (57.65, 1), (60.35, 1), (60.45, 0.35), (68, 0.35)])
+village = env_pts_s([(0, 0), (18.4, 0), (18.6, 1), (23.2, 1), (23.4, 0), (68, 0)])
+past = env_pts_s([(0, 0), (11.9, 0), (12.1, 1), (16.6, 1), (17.8, 0), (68, 0)])
+master = env_pts_s([(0, 0), (0.6, 1), (65.0, 1), (67.5, 0), (68, 0)])
 
 # ---------------- ocean / surf
 brown = np.cumsum(rng.standard_normal(N)); brown = hpf(brown, 20); brown /= np.abs(brown).max()
@@ -64,7 +71,7 @@ for ts, g, pan in [(39.4, 1.0, -0.4), (42.6, 0.8, 0.5), (46.1, 0.6, -0.2), (61.6
     rumble = lpf(np.cumsum(rng.standard_normal(n)), 120); rumble /= np.abs(rumble).max()
     rumble *= (1 - np.exp(-tt * 6)) * np.exp(-tt * 0.7) * (1 + 0.5 * np.sin(tt * 9) * np.sin(tt * 3.7))
     th = crack + rumble * 1.2
-    add(th, ts + 0.25, g * 0.6, pan)
+    add(th, V(ts) + 0.25, g * 0.6, pan)
 
 # ---------------- music pad (D minor), soft
 def note(f, dur, a=2.0, r=3.0, harm=(1, 0.5, 0.25, 0.12), det=0.003):
@@ -78,6 +85,7 @@ def note(f, dur, a=2.0, r=3.0, harm=(1, 0.5, 0.25, 0.12), det=0.003):
 midi = lambda m: 440 * 2 ** ((m - 69) / 12)
 chords = [(0, [38, 50, 53, 57]), (8, [34, 46, 50, 53]), (16, [31, 43, 46, 50]), (24, [33, 45, 49, 52]),
           (32, [38, 50, 53, 57]), (40, [34, 46, 50, 55]), (48, [33, 45, 48, 52]), (56, [38, 50, 53, 57]), (61, [33, 45, 49, 52])]
+chords = [(round(st * 75 / 68, 2), ns) for st, ns in chords]
 for i, (st, ns) in enumerate(chords):
     dur = (chords[i + 1][0] - st if i + 1 < len(chords) else DUR - st) + 3
     for m in ns:
@@ -87,14 +95,14 @@ mb = [(12.3, 74), (12.9, 77), (13.5, 81), (14.1, 79), (14.7, 77), (15.3, 76), (1
 for ts, m in mb:
     n = int(SR * 2.5); tt = np.arange(n) / SR; f = midi(m)
     s = (np.sin(2 * np.pi * f * tt) + 0.3 * np.sin(2 * np.pi * f * 2.01 * tt) + 0.15 * np.sin(2 * np.pi * f * 4.2 * tt)) * np.exp(-tt * 2.2) * np.minimum(1, tt / 0.004)
-    add(s, ts, 0.07, 0.3)
+    add(s, V(ts), 0.07, 0.3)
 # deep hits
 for ts, g in [(0.5, 0.5), (6.0, 0.3), (57.6, 0.3), (62.6, 0.45)]:
     n = int(SR * 5); tt = np.arange(n) / SR
     s = np.sin(2 * np.pi * (45 + 25 * np.exp(-tt * 3)) * tt) * np.exp(-tt * 0.9) + lpf(rng.standard_normal(n), 200) * np.exp(-tt * 1.5) * 0.4
-    add(s, ts, g)
+    add(s, V(ts), g)
 # tension drone in the storm part
-dr = (np.sin(2 * np.pi * 73.4 * t) + 0.5 * np.sin(2 * np.pi * 77.8 * t)) * env_pts([(0, 0), (44, 0), (48, 0.05), (57, 0.08), (60, 0.03), (66, 0)])
+dr = (np.sin(2 * np.pi * 73.4 * t) + 0.5 * np.sin(2 * np.pi * 77.8 * t)) * env_pts_s([(0, 0), (44, 0), (48, 0.05), (57, 0.08), (60, 0.03), (66, 0)])
 L += dr; R += dr
 
 # ---------------- metal knocks (Morse) at lighthouse
@@ -110,7 +118,7 @@ for i in range(3): seq.append(k0 + 1.25 + i * 0.75)
 for i in range(3): seq.append(k0 + 3.85 + i * 0.28)
 for ts in seq:
     s = knock(); s = s + 0.35 * np.concatenate([np.zeros(int(SR * 0.09)), s[:-int(SR * 0.09)]])  # tower echo
-    add(s, ts, 0.5, 0.15)
+    add(s, V(ts), 0.5, 0.15)
 
 # ---------------- typewriter
 def click(g=1.0):
@@ -121,12 +129,12 @@ for base_ph in (0, 2.1):
     while True:
         # peaks of sin(u*17 + ph): u = (pi/2 - ph + 2pi k)/17
         u = (np.pi / 2 - base_ph + 2 * np.pi * k) / 17; k += 1
-        if u < 31: continue
-        if u > 37.9: break
-        if 35.2 < u < 37.0: continue
+        if u < V(31): continue
+        if u > V(37.9): break
+        if V(35.2) < u < V(37.0): continue
         add(click(rng.uniform(0.6, 1.0)), u - 0.02, 0.22, rng.uniform(-0.3, 0.1))
 n = int(SR * 2); tt = np.arange(n) / SR
-add((np.sin(2 * np.pi * 2093 * tt) + 0.4 * np.sin(2 * np.pi * 5230 * tt)) * np.exp(-tt * 3), 35.15, 0.08, 0.2)  # carriage bell
+add((np.sin(2 * np.pi * 2093 * tt) + 0.4 * np.sin(2 * np.pi * 5230 * tt)) * np.exp(-tt * 3), V(35.15), 0.08, 0.2)  # carriage bell
 # stove crackle
 cr = bp((rng.random(N) > 0.9996) * rng.standard_normal(N) * 2, 800, 5000) * interior * (1 - storm * 0.3)
 L += cr * 0.25; R += cr * 0.18
@@ -134,6 +142,7 @@ L += cr * 0.25; R += cr * 0.18
 # ---------------- signal flash tones
 SIG = [(48.6, .18), (48.95, .18), (49.3, .18), (52.3, .2), (52.65, .2), (53.0, .2), (54.2, .55), (54.95, .55), (55.7, .55), (56.75, .2), (57.1, .2), (57.45, .2), (58.6, .2), (58.95, .2), (59.3, .2), (62.6, 1.0)]
 for ts, d in SIG:
+    d = V(ts + d) - V(ts); ts = V(ts)
     n = int(SR * (d + 0.6)); tt = np.arange(n) / SR
     e = np.minimum(1, tt / 0.02) * np.clip((d + 0.05 - tt) / 0.05, 0, 1) + np.exp(-np.maximum(tt - d, 0) * 5) * (tt > d) * 0.3
     s = (np.sin(2 * np.pi * 220 * tt) * 0.6 + np.sin(2 * np.pi * 440.7 * tt) * 0.3 + np.sin(2 * np.pi * 660 * tt) * 0.12) * e
@@ -145,20 +154,21 @@ k = 0
 while True:
     ts = ph0 + (np.pi / 2 + np.pi * k) / 7.5; k += 1
     if ts > 66: break
+    tsv = V(ts)
     n = int(SR * 0.25); tt = np.arange(n) / SR
     s = lpf(rng.standard_normal(n), 900) * np.exp(-tt * 30) + bp(rng.standard_normal(n), 2000, 6000) * np.exp(-tt * 18) * 0.3
-    add(s, ts, 0.09, -0.2)
+    add(s, tsv, 0.09, -0.2)
 # door
 n = int(SR * 1.2); tt = np.arange(n) / SR
-add(lpf(rng.standard_normal(n), 400) * np.exp(-tt * 8) + np.sin(2 * np.pi * 90 * tt) * np.exp(-tt * 10), 60.3, 0.25, -0.3)
+add(lpf(rng.standard_normal(n), 400) * np.exp(-tt * 8) + np.sin(2 * np.pi * 90 * tt) * np.exp(-tt * 10), V(60.3), 0.25, -0.3)
 
 # ---------------- village: distant dog + creaking sign
 n = int(SR * 0.35); tt = np.arange(n) / SR
 bark = bp(np.sign(np.sin(2 * np.pi * (420 - 180 * tt) * tt)) * np.exp(-tt * 9), 300, 2000)
-for ts in (19.6, 20.0, 21.9): add(bark, ts, 0.05, -0.7)
+for ts in (19.6, 20.0, 21.9): add(bark, V(ts), 0.05, -0.7)
 n = int(SR * 1.5); tt = np.arange(n) / SR
 creak = bp(np.sin(2 * np.pi * (300 + 120 * np.sin(tt * 3)) * tt) * (np.sin(2 * np.pi * 23 * tt) > 0.6), 300, 2500) * np.sin(np.pi * tt / 1.5)
-add(creak, 21.0, 0.05, 0.4)
+add(creak, V(21.0), 0.05, 0.4)
 
 # ---------------- narration
 def readwav(p):
@@ -172,17 +182,17 @@ def voice(x):
     x = hpf(x, 60); wet = fftconvolve(x, ir)[:len(x)] * 0.035
     return x + wet
 vo = np.zeros(N)
-v8 = readwav('vo/8.wav')
-placement = [('vo/1.wav', 6.4), ('vo/2.wav', 12.4), ('vo/3.wav', 18.9), ('vo/4.wav', 23.7), ('vo/5.wav', 31.4), ('vo/6.wav', 38.6), ('vo/7.wav', 44.9), ('vo/9.wav', 58.0)]
+v8 = readwav('vo_x/8.wav')
+placement = [('vo_x/1.wav', 6.4), ('vo_x/2.wav', 13.6), ('vo_x/3.wav', 20.1), ('vo_x/4.wav', 24.9), ('vo_x/5.wav', 34.1), ('vo_x/6.wav', 41.8), ('vo_x/7.wav', 48.2), ('vo_x/9.wav', 64.47)]
 for p, at in placement:
     x = voice(readwav(p)); i = int(at * SR); vo[i:i + len(x)] += x[:N - i]
-for (a, b), at in [((0.0, 1.14), 51.2), ((1.5, 2.48), 53.35), ((2.84, 3.8), 55.95)]:
+for (a, b), at in [((0.0, 1.16), V(51.2)), ((1.3, 2.53), V(53.35)), ((2.6, 3.73), V(55.95))]:
     x = voice(v8[int(a * SR):int(b * SR)]); x *= np.minimum(1, np.minimum(np.arange(len(x)), np.arange(len(x))[::-1]) / 400)
     i = int(at * SR); vo[i:i + len(x)] += x
 vo_env = lpf(np.abs(vo), 3) ; duck = 1 - 0.68 * np.clip(vo_env * 14, 0, 1)
 L *= duck; R *= duck
 m = np.abs(vo) > 1e-4
-for a,b in [(6.4,10.6),(12.4,16.3),(23.7,30.1),(31.4,37.4),(38.6,43.8),(44.9,50.3),(58,59.7)]:
+for a,b in [(6.4,12.5),(13.6,18.3),(24.9,33.4),(34.1,40.7),(41.8,47.1),(48.2,56.5),(64.5,66.9)]:
     i,j=int(a*SR),int(b*SR); rv=np.sqrt(np.mean((vo[i:j]*0.95)**2)); rb=np.sqrt(np.mean(L[i:j]**2))
     print(a, 'voice/bed dB', round(20*np.log10(rv/rb),1))
 L += vo * 0.95; R += vo * 0.95
