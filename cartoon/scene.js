@@ -783,8 +783,8 @@ function renderAt(t, uv) {
   composer.render();
 }
 
-const KN = [[0,0],[6,6],[13.2,12],[19.7,18.5],[24.5,23.3],[33.7,31],[41.3,38],[47.8,44.5],[55.0,48.4],[57.4,51],[64.0,57.6],[67.3,60.4],[74.9,68]];
-function storyT(v) { for (let i = 1; i < KN.length; i++) { if (v <= KN[i][0]) { const [v0, s0] = KN[i - 1], [v1, s1] = KN[i]; return s0 + (v - v0) / (v1 - v0) * (s1 - s0); } } return 68 + (v - 74.9); }
+const KN = [[0,0],[6,6],[14.7,12],[21.4,18.5],[26.2,23.3],[37.8,31],[46.7,38],[54.0,44.5],[63.7,48.4],[66.3,51],[76.2,57.6],[80.4,60.4],[88.0,68]];
+function storyT(v) { for (let i = 1; i < KN.length; i++) { if (v <= KN[i][0]) { const [v0, s0] = KN[i - 1], [v1, s1] = KN[i]; return s0 + (v - v0) / (v1 - v0) * (s1 - s0); } } return 68 + (v - 88.0); }
 window.renderAt = (v) => { renderAt(storyT(v), v); return true; };
 window.grab = (q = 0.95) => renderer.domElement.toDataURL('image/jpeg', q);
 window.OBJ = { lampGlow, beam, lampLight, lh, bloom, handGlow };

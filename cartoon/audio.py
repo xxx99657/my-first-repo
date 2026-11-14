@@ -1,11 +1,11 @@
 import numpy as np, wave, subprocess, os
-KN = [[0,0],[6,6],[13.2,12],[19.7,18.5],[24.5,23.3],[33.7,31],[41.3,38],[47.8,44.5],[55.0,48.4],[57.4,51],[64.0,57.6],[67.3,60.4],[74.9,68]]
+KN = [[0,0],[6,6],[14.7,12],[21.4,18.5],[26.2,23.3],[37.8,31],[46.7,38],[54.0,44.5],[63.7,48.4],[66.3,51],[76.2,57.6],[80.4,60.4],[88.0,68]]
 def V(x):
     for i in range(1, len(KN)):
         if x <= KN[i][1]:
             (v0, s0), (v1, s1) = KN[i-1], KN[i]; return v0 + (x - s0) / (s1 - s0) * (v1 - v0)
-    return 74.9 + x - 68
-SR = 48000; DUR = 75.0; N = int(SR * DUR)
+    return 88.0 + x - 68
+SR = 48000; DUR = 88.0; N = int(SR * DUR)
 rng = np.random.default_rng(7)
 t = np.arange(N) / SR
 L = np.zeros(N); R = np.zeros(N)
@@ -85,7 +85,7 @@ def note(f, dur, a=2.0, r=3.0, harm=(1, 0.5, 0.25, 0.12), det=0.003):
 midi = lambda m: 440 * 2 ** ((m - 69) / 12)
 chords = [(0, [38, 50, 53, 57]), (8, [34, 46, 50, 53]), (16, [31, 43, 46, 50]), (24, [33, 45, 49, 52]),
           (32, [38, 50, 53, 57]), (40, [34, 46, 50, 55]), (48, [33, 45, 48, 52]), (56, [38, 50, 53, 57]), (61, [33, 45, 49, 52])]
-chords = [(round(st * 75 / 68, 2), ns) for st, ns in chords]
+chords = [(round(st * 88 / 68, 2), ns) for st, ns in chords]
 for i, (st, ns) in enumerate(chords):
     dur = (chords[i + 1][0] - st if i + 1 < len(chords) else DUR - st) + 3
     for m in ns:
@@ -174,33 +174,31 @@ add(creak, V(21.0), 0.05, 0.4)
 def readwav(p):
     with wave.open(p) as w:
         sr = w.getframerate(); x = np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float64) / 32768
-    if sr != SR: x = np.interp(np.arange(int(len(x) * SR / sr)) / SR, np.arange(len(x)) / sr, x)
+    if sr != SR:
+        from scipy.signal import resample_poly
+        from math import gcd
+        gg = gcd(SR, sr); x = resample_poly(x, SR // gg, sr // gg)
     return x
 ir_n = int(SR * 0.6); irt = np.arange(ir_n) / SR
 ir = rng.standard_normal(ir_n) * np.exp(-irt * 9); ir[0] = 0
 def voice(x):
-    x = hpf(x, 60); wet = fftconvolve(x, ir)[:len(x)] * 0.035
-    return x + wet
+    return x  # голос без какой-либо обработки
 vo = np.zeros(N)
-v8 = readwav('vo_x/8.wav')
-placement = [('vo_x/1.wav', 6.4), ('vo_x/2.wav', 13.6), ('vo_x/3.wav', 20.1), ('vo_x/4.wav', 24.9), ('vo_x/5.wav', 34.1), ('vo_x/6.wav', 41.8), ('vo_x/7.wav', 48.2), ('vo_x/9.wav', 64.47)]
+X = '../xtts/'
+placement = [(X+'line_1.wav', 6.4), (X+'line_2.wav', 15.1), (X+'line_3.wav', 21.8), (X+'line_4.wav', 26.6), (X+'line_5.wav', 38.2), (X+'line_6.wav', 47.1), (X+'line_7.wav', 54.4), (X+'line_8.wav', 66.55), (X+'line_9.wav', 69.7), (X+'line_10.wav', 72.8), (X+'line_11.wav', 76.6)]
 for p, at in placement:
-    x = voice(readwav(p)); i = int(at * SR); vo[i:i + len(x)] += x[:N - i]
-for (a, b), at in [((0.0, 1.16), V(51.2)), ((1.3, 2.53), V(53.35)), ((2.6, 3.73), V(55.95))]:
-    x = voice(v8[int(a * SR):int(b * SR)]); x *= np.minimum(1, np.minimum(np.arange(len(x)), np.arange(len(x))[::-1]) / 400)
-    i = int(at * SR); vo[i:i + len(x)] += x
-vo_env = lpf(np.abs(vo), 3) ; duck = 1 - 0.68 * np.clip(vo_env * 14, 0, 1)
+    x = voice(readwav(p)); x = x * (0.16 / np.sqrt(np.mean(x[np.abs(x) > 0.01] ** 2))); i = int(at * SR); vo[i:i + len(x)] += x[:N - i]
+vo_env = lpf(np.abs(vo), 3) ; duck = 1 - 0.8 * np.clip(vo_env * 16, 0, 1)
 L *= duck; R *= duck
 m = np.abs(vo) > 1e-4
-for a,b in [(6.4,12.5),(13.6,18.3),(24.9,33.4),(34.1,40.7),(41.8,47.1),(48.2,56.5),(64.5,66.9)]:
-    i,j=int(a*SR),int(b*SR); rv=np.sqrt(np.mean((vo[i:j]*0.95)**2)); rb=np.sqrt(np.mean(L[i:j]**2))
+for a,b in [(6.4,14.2),(15.1,20.7),(26.6,36.7),(38.2,46.2),(47.1,53.5),(54.4,65.0),(76.6,79.8)]:
+    i,j=int(a*SR),int(b*SR); rv=np.sqrt(np.mean((vo[i:j]*1.8)**2)); rb=np.sqrt(np.mean(L[i:j]**2))
     print(a, 'voice/bed dB', round(20*np.log10(rv/rb),1))
-L += vo * 0.95; R += vo * 0.95
+L += vo * 1.8; R += vo * 1.8
 
 L *= master; R *= master
 pk = max(np.abs(L).max(), np.abs(R).max()); g = 0.89 / pk
 out = np.stack([L * g, R * g], 1)
-out = np.tanh(out * 1.1) / np.tanh(1.1)
 with wave.open('soundtrack.wav', 'w') as w:
     w.setnchannels(2); w.setsampwidth(2); w.setframerate(SR); w.writeframes((out * 32767).astype(np.int16).tobytes())
 print('ok', pk)

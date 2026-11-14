@@ -2,7 +2,7 @@ import sys, os, torch, numpy as np, soundfile as sf
 os.environ["COQUI_TOS_AGREED"] = "1"  # user accepted CPML (non-commercial) in chat
 from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import Xtts
-torch.set_num_threads(2)
+torch.set_num_threads(4)
 cfg = XttsConfig(); cfg.load_json("config.json")
 m = Xtts.init_from_config(cfg); m.load_checkpoint(cfg, checkpoint_dir=".", eval=True)
 g, e = m.get_conditioning_latents(audio_path=["ref.wav"], gpt_cond_len=30, max_ref_length=30)
