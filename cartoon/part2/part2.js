@@ -633,6 +633,7 @@ function renderAt2(t) {
   const doorC = extDoor.position.clone();
   extD.leaf.rotation.y = 0; hasp.rotation.set(0, 0, 0); hasp.position.set(0.5, 1.12, 0.06); padlock.visible = true;
   let shadowC = LH.clone(), shadowR = 30;
+  sunBeam.mesh.position.copy(sunBeam.o); sunBeam.mesh.scale.z = 1; // default sun-beam cone (room shot shortens it)
 
   if (t < ST.walk) { // title: morning wide
     const k = ease(t / ST.walk);
@@ -703,13 +704,23 @@ function renderAt2(t) {
     const c0 = mech.localToWorld(V3(-0.6, 0.25, 1.3)), c1 = mech.localToWorld(V3(0.45, 0.05, 1.05)); setCam(lerpV2(c0, c1, k), mech.localToWorld(V3(mix(-0.1, 0.25, k), 0.0, 0)), 42);
     dof = { focus: camera.position.distanceTo(mech.localToWorld(V3(0.36, -0.12, 0))), aperture: 0.003 };
     setDustBeams([beams[2], beams[3]]);
-  } else if (t < ST.box) { // top room reveal (head rises through hatch) -> push to box
+  } else if (t < ST.box) { // top room reveal: eyes rise above the hatch facing the window/clock wall, head turns to the desk, push to box
     useInner = true; const k = loc(t, ST.room, ST.box);
-    const rise = smooth(0, 0.35, k); const a = stepAngle(STEPS - 2); const base = V3(Math.cos(a) * 0.6, TOP - 0.4 + rise * 2.0, -Math.sin(a) * 0.6);
-    const bw = new THREE.Vector3(); box.getWorldPosition(bw);
-    const look = lerpV2(V3(0, TOP + 1.3, 0).lerp(bw, 0.3), bw, smooth(0.3, 0.9, k));
-    const cam = lerpV2(base, bw.clone().add(V3(-0.15, 0.55, 0)).lerp(base, 0.35), ease(smooth(0.35, 1, k)));
-    setCam(cam, look, mix(55, 38, smooth(0.35, 1, k))); dof = { focus: cam.distanceTo(bw), aperture: 0.002 * smooth(0.4, 1, k) };
+    const bw = new THREE.Vector3(); box.getWorldPosition(bw); bw.y += 0.05;
+    const rise = smooth(0, 0.3, k), push = ease(smooth(0.45, 1, k));
+    const Pr = V3(0.5, TOP + 0.04 + rise * 1.41 + Math.sin(t * 2.1) * 0.006 * (1 - push), 0.05); // inside the hatch opening
+    const E = bw.clone().add(V3(-0.15, 0.5, 0)).lerp(V3(0.5, TOP + 1.45, 0.05), 0.35);
+    const cam = lerpV2(Pr, E, push);
+    // look target: first the far wall (window + ticking clock), then yaw/pitch turn toward the box (never through the camera)
+    const L1 = V3(Math.cos(1.45) * (TR - 0.2), mix(cam.y + 0.25, TOP + 1.3, rise), -Math.sin(1.45) * (TR - 0.2));
+    const dirTo = v => { const d = v.clone().sub(cam); return [Math.atan2(d.z, d.x), Math.atan2(d.y, Math.hypot(d.x, d.z))]; };
+    const [y1, p1] = dirTo(L1), [y2, p2] = dirTo(bw);
+    let dy = y2 - y1; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+    const turn = ease(smooth(0.22, 0.48, k)), yw = y1 + dy * turn, pt = mix(p1, p2, turn);
+    const look = cam.clone().add(V3(Math.cos(yw) * Math.cos(pt), Math.sin(pt), Math.sin(yw) * Math.cos(pt)));
+    setCam(cam, look, mix(55, 38, push)); dof = { focus: mix(cam.distanceTo(L1), cam.distanceTo(bw), turn), aperture: 0.002 * smooth(0.5, 1, k) };
+    // start the haze cone inside the room so it fades in softly instead of cutting a hard edge into the wall
+    sunBeam.mesh.position.copy(sunBeam.o).addScaledVector(sunBeam.d, 1.1); sunBeam.mesh.scale.z = (sunBeam.len - 1.1) / sunBeam.len;
     setDustBeams([sunBeam]);
   } else if (t < ST.news) { // box opens, folded newspaper inside (masthead: today's date)
     useInner = true; const k = loc(t, ST.box, ST.news); const T = t - ST.box;
